@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCE-TTS: 텍스트 읽기</title>
+</head>
+
+<body>
+    <header class="page-header">
+        <nav>
+            <a href="/">AITTS 서버 출력 테스트</a>
+        </nav>
+    </header>
+    <main>
+        <section>
+            <textarea name="text" id="text">테스트를 위한 내용입니다.</textarea>
+        </section>
+        <section class="form">
+            <div class="form-group">
+                <label>Enter 입력시 음성 재생: </label>
+                <input type="checkbox" id="enter" name="enter" value="ON">
+            </div>
+
+<!--            <div class="form-group">
+                <label>볼륨: </label>
+                <input type="range" id="volume" name="volume" min="0" max="10" value="5">
+            </div>
+-->
+            <div class="form-group">
+                <button id="infer" class="button-small">음성 재생</button>
+                <button id="stop" class="button-small">정지</button>
+            </div>
+        </section>
+        <section>
+            <div id="result"></div>
+        </section>
+    </main>
+    <script>
+        function sleep(time) {
+            return new Promise((resolve) => setTimeout(resolve, time));
+        }
+
+        const textDOM = document.getElementById('text');
+        const resultDOM = document.getElementById('result');
+        const inferDOM = document.getElementById('infer');
+        const stopDOM = document.getElementById('stop');
+        const modelDOM = document.getElementById('model');
+//        const volumeDOM = document.getElementById('volume');
+        const enterDOM = document.querySelector('input[name="enter"]');
+
+        var audio = null;
+        var audio_next = null;
+        var voice_queue = [];
+
+        function play_voice() {
+            if (audio_next != null) {
+                audio = audio_next;
+                audio_next = null;
+                audio.addEventListener('ended', play_voice);
+                sleep(300).then(() => {
+                    amplifyMedia(audio, 6 / 5.0);
+                    audio.play();
+                });
+            }
+            if (voice_queue.length == 0) {
+                return;
+            }
+            const text = voice_queue[0];
+            voice_queue.shift();
+
+            audio_next = new Audio('/tts-server/api/infer-glowtts?text=' + encodeURI(text));
+            audio_next.type = 'audio/wav';
+            audio_next.load();
+            if (audio == null) {
+                play_voice();
+            }
+        }
+
+        function clear_voice() {
+            voice_queue = [];
+            if (audio != null) {
+                audio.removeEventListener('ended', play_voice);
+                audio.pause();
+                audio = null;
+                audio_next = null;
+            }
+        }
+
+        function infer() {
+            const text = textDOM.value;
+            fetch('/tts-server/api/process-text', {
+                method: "POST",
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text: text
+                })
+            })
+                .then(function (response) {
+                    return response.json();
+                })
+                .then(function (texts) {
+                    resultDOM.innerHTML = "";
+                    for (let i = 0; i < texts.length; i++) {
+                        const line = texts[i];
+                        resultDOM.innerHTML += "<p>" + line + "</p>";
+                    }
+                    clear_voice();
+                    voice_queue = texts;
+                    play_voice();
+                });
+        };
+
+
+        function amplifyMedia(audio, multiplier) {
+            var context = new (window.AudioContext || window.webkitAudioContext);
+            var result = {
+                context: context,
+                source: context.createMediaElementSource(audio),
+                gain: context.createGain(),
+                amplify: function (multiplier) { result.gain.gain.value = multiplier; },
+                getAmpLevel: function () { return result.gain.gain.value; }
+            };
+            result.source.connect(result.gain);
+            result.gain.connect(context.destination);
+            result.amplify(multiplier);
+            return result;
+        }
+
+        inferDOM.onclick = infer;
+        stopDOM.onclick = clear_voice;
+        textDOM.onkeypress = function (e) {
+            if (e.keyCode == 13 && enterDOM.checked) {
+                infer();
+                textDOM.value = '';
+                e.preventDefault();
+            }
+        };
+    </script>
+</body>
+
+</html>
